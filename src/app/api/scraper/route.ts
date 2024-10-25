@@ -1,6 +1,6 @@
-import chromium from '@sparticuz/chromium-min';
-import puppeteer from 'puppeteer-core';
-import { v2 as cloudinary } from 'cloudinary';
+import chromium from "@sparticuz/chromium-min";
+import puppeteer from "puppeteer-core";
+import { v2 as cloudinary } from "cloudinary";
 
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
@@ -8,40 +8,40 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-export const maxDuration = 20;
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  const { siteUrl } = await request.json();
+  try {
+    const { siteUrl } = await request.json();
+    console.log("Hedef URL:", siteUrl);
 
-  const isLocal = !!process.env.CHROME_EXECUTABLE_PATH;
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: process.env.CHROME_EXECUTABLE_PATH || await chromium.executablePath(),
+      headless: chromium.headless,
+    });
 
-  const browser = await puppeteer.launch({
-    args: isLocal ? puppeteer.defaultArgs() : chromium.args,
-    defaultViewport: chromium.defaultViewport,
-    executablePath: process.env.CHROME_EXECUTABLE_PATH || await chromium.executablePath('https://<Bucket Name>.s3.amazonaws.com/chromium-v126.0.0-pack.tar'),
-    headless: chromium.headless,
-  });
+    const page = await browser.newPage();
+    await page.goto(siteUrl);
 
-  const page = await browser.newPage();
-  await page.goto(siteUrl);
-  const pageTitle = await page.title();
-  const screenshot = await page.screenshot();
-  await browser.close();
+    // Ürün bilgilerini çıkarma
+    const products = await page.evaluate(() => {
+      const productElements = document.querySelectorAll('article.product_pod');
+      return Array.from(productElements).map(el => ({
+        name: el.querySelector('h3 a')?.getAttribute('title'),
+        price: el.querySelector('.price_color')?.textContent,
+      }));
+    });
 
-  const resource = await new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream({}, function (error: unknown, result: unknown) {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result);
-    })
-    .end(screenshot);
-  });
+    await browser.close();
 
-  return Response.json({
-    siteUrl,
-    pageTitle,
-    resource
-  })
+    return Response.json({ siteUrl, products });
+  } catch (error: any) {
+    console.error("Scraper hatası:", error);
+    return Response.json(
+      { error: "Scraping sırasında bir hata oluştu", details: error.message },
+      { status: 500 }
+    );
+  }
 }
